@@ -4,22 +4,38 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import task.project.loancalculator.exception.LoanCalculatorException;
 import task.project.loancalculator.model.LoanPaymentMonthlyDetails;
+import task.project.loancalculator.model.LoanPaymentMonthlyDetails.LoanPaymentMonthlyDetailsBuilder;
+
+/**
+ * A service class to provide calculations of LoanPaymentMonthlyDetails parameters based on request.
+ */
 
 @Service
 public class LoanCalculatorService {
 
+  /**
+   * A lower limit of loan amount, provided via properties file.
+   */
   private Integer loanAmountLowerLimit;
 
+  /**
+   * An upper limit of loan amount, provided via properties file.
+   */
   private Integer loanAmountUpperLimit;
 
+  /**
+   * A lower limit of loan term, provided via properties file.
+   */
   private Integer loanTermLowerLimit;
 
+  /**
+   * An upper limit of loan term, provided via properties file.
+   */
   private Integer loanTermUpperLimit;
 
   public LoanCalculatorService(@Value("${loanAmountLowerLimit}") Integer loanAmountLowerLimit,
@@ -32,35 +48,55 @@ public class LoanCalculatorService {
     this.loanTermUpperLimit = loanTermUpperLimit;
   }
 
-  public List<LoanPaymentMonthlyDetails> calculateMonthlyPercentPayment(final Integer loanAmount,
+  /**
+   * This method calculates a complete loan payments schedule in a form of LoanPaymentMonthlyDetails objects list.
+   * Calculations are based on loan amount, loan term and loan interest rate parameters. First two are provided by the
+   * client via request, the latter is taken from property file.
+   *
+   * @param loanAmount
+   * @param loanTerm
+   * @param loanInterestRate
+   * @return
+   */
+  public List<LoanPaymentMonthlyDetails> calculateLoanPaymentsSchedule(final Integer loanAmount,
       final Integer loanTerm, final Double loanInterestRate) {
 
     validateLoanAmountRange(loanAmount);
     validateLoanTermRange(loanTerm);
 
     final List<LoanPaymentMonthlyDetails> result = new ArrayList<>();
-    final List<String> paymentSchedule = populateLoanPaymentSchedule(loanTerm);
+    final List<String> paymentYearAndMonth = populatePaymentYearAndMonth(loanTerm);
 
-    BigDecimal decimalLoanTotal = new BigDecimal(loanAmount);
+    BigDecimal decimalLoanAmount = new BigDecimal(loanAmount);
     BigDecimal monthlyInterestPayment = new BigDecimal("0.00");
     BigDecimal monthlyPrincipalPayment = new BigDecimal("0.00");
     BigDecimal monthlyTotalPayment = calculateMonthlyPayment(loanAmount, loanTerm, loanInterestRate);
     Double interestPerMonth = loanInterestRate / (100.0 * 12);
 
     for (int i = 1; i <= loanTerm; i++) {
-      monthlyInterestPayment = decimalLoanTotal.multiply(new BigDecimal(interestPerMonth));
+      monthlyInterestPayment = decimalLoanAmount.multiply(new BigDecimal(interestPerMonth));
       monthlyPrincipalPayment = monthlyTotalPayment.subtract(monthlyInterestPayment);
-      decimalLoanTotal = decimalLoanTotal.subtract(monthlyPrincipalPayment);
-      result.add(
-          new LoanPaymentMonthlyDetails(i, paymentSchedule.get(i - 1),
-              monthlyPrincipalPayment.setScale(2, RoundingMode.HALF_EVEN),
-              monthlyInterestPayment.setScale(2, RoundingMode.HALF_EVEN),
-              decimalLoanTotal.setScale(2, RoundingMode.HALF_EVEN),
-              monthlyTotalPayment.setScale(2, RoundingMode.HALF_EVEN)));
+      decimalLoanAmount = decimalLoanAmount.subtract(monthlyPrincipalPayment);
+      result.add(new LoanPaymentMonthlyDetailsBuilder()
+          .paymentNumber(i)
+          .paymentYearAndMonth(paymentYearAndMonth.get(i - 1))
+          .principalPayment(monthlyPrincipalPayment.setScale(2, RoundingMode.HALF_EVEN))
+          .interestPayment(monthlyInterestPayment.setScale(2, RoundingMode.HALF_EVEN))
+          .principalBalance(decimalLoanAmount.setScale(2, RoundingMode.HALF_EVEN))
+          .totalMonthlyPayment(monthlyTotalPayment.setScale(2, RoundingMode.HALF_EVEN))
+          .build());
     }
     return result;
   }
 
+  /**
+   * This method calculates a total value of monthly payment to cover both principal and interest debts.
+   *
+   * @param loanAmount
+   * @param loanTerm
+   * @param loanInterestRate
+   * @return
+   */
   private BigDecimal calculateMonthlyPayment(final Integer loanAmount, final Integer loanTerm,
       final Double loanInterestRate) {
 
@@ -72,17 +108,24 @@ public class LoanCalculatorService {
     return new BigDecimal(loanAmount).multiply(new BigDecimal(multiplicand));
   }
 
-  private List<String> populateLoanPaymentSchedule(final Integer loanTerm) {
+  /**
+   * A method to populate a list of strings, which represent abstract year and month information in loan schedule table.
+   * The length of the list is equal to loanTerm.
+   *
+   * @param loanTerm
+   * @return
+   */
+  private List<String> populatePaymentYearAndMonth(final Integer loanTerm) {
 
     final List<String> result = new ArrayList<>();
 
-    String loanPaymentScheduleInput = null;
+    String yearAndMonthRecord = null;
     Integer yearsCounter = 1;
     Integer monthsInAYearCounter = 1;
 
     for (int i = 1; i <= loanTerm; i++) {
-      loanPaymentScheduleInput = String.format("Year %s, Month %s", yearsCounter, monthsInAYearCounter);
-      result.add(loanPaymentScheduleInput);
+      yearAndMonthRecord = String.format("Year %s, Month %s", yearsCounter, monthsInAYearCounter);
+      result.add(yearAndMonthRecord);
       if (monthsInAYearCounter % 12 == 0) {
         monthsInAYearCounter = 1;
         yearsCounter = ++yearsCounter;
@@ -93,16 +136,24 @@ public class LoanCalculatorService {
     return result;
   }
 
+  /**
+   * A method to validate a range of loanAmount.
+   *
+   * @param loanAmount
+   */
   private void validateLoanAmountRange(Integer loanAmount) {
-    Optional.ofNullable(loanAmount)
-        .filter(Objects::nonNull)
+    Optional.of(loanAmount)
         .filter(amount -> amount >= loanAmountLowerLimit && amount <= loanAmountUpperLimit)
         .orElseThrow(() -> new LoanCalculatorException("Loan amount is out of range."));
   }
 
+  /**
+   * A method to validate a range of LoanTerm.
+   *
+   * @param loanTerm
+   */
   private void validateLoanTermRange(Integer loanTerm) {
-    Optional.ofNullable(loanTerm)
-        .filter(Objects::nonNull)
+    Optional.of(loanTerm)
         .filter(term -> term >= loanTermLowerLimit && term <= loanTermUpperLimit)
         .orElseThrow(() -> new LoanCalculatorException("Loan term is out of range."));
   }
